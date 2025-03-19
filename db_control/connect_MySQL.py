@@ -12,11 +12,11 @@ load_dotenv()
 DB_USER = os.getenv('DB_USER')
 DB_PASSWORD = os.getenv('DB_PASSWORD')
 DB_HOST = os.getenv('DB_HOST')
-DB_PORT = os.getenv('DB_PORT', "3306")
+DB_PORT = os.getenv('DB_PORT')
 DB_NAME = os.getenv('DB_NAME')
 
 # SSL証明書のパス
-SSL_CA_PATH = str(base_path / "DigiCertGlobalRootCA.crt.pem")
+SSL_CA_PATH = str(base_path / "DigiCertGlobalRootG2.crt.pem")
 
 # MySQLのURL構築
 DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
