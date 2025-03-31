@@ -15,7 +15,7 @@ DB_HOST = os.getenv('DB_HOST')
 DB_PORT = os.getenv('DB_PORT')
 DB_NAME = os.getenv('DB_NAME')
 
-# SSL証明書のパス
+# SSL証明書のパス（ローカルで動かす場合は各自のSSL証明書を入れる必要がある？）
 SSL_CA_PATH = str(base_path / "DigiCertGlobalRootG2.crt.pem")
 
 # MySQLのURL構築

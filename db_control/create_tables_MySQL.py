@@ -12,9 +12,24 @@ def init_db():
 
     print("Checking tables...")
 
-    # customersテーブルが存在しない場合は作成
-    if 'customers' not in existing_tables:
-        print("Creating tables >>> ")
+    # 必要なテーブルのリスト
+    required_tables = [
+        'users',
+        'meeting',
+        'knowledge',
+        'challenge',
+        'tags',
+        'knowledge_tags',
+        'challenge_tags',
+        'thanks',
+        'view'
+    ]
+
+    # 存在しないテーブルを確認
+    missing_tables = [table for table in required_tables if table not in existing_tables]
+
+    if missing_tables:
+        print(f"Creating missing tables: {', '.join(missing_tables)}")
         try:
             Base.metadata.create_all(bind=engine)
             print("Tables created successfully!")
@@ -22,7 +37,7 @@ def init_db():
             print(f"Error creating tables: {e}")
             raise
     else:
-        print("Tables already exist.")
+        print("All required tables already exist.")
 
 
 if __name__ == "__main__":
