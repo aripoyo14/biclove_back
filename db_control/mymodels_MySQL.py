@@ -11,7 +11,7 @@ Base = declarative_base()
 # Usersテーブル
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(String(100), primary_key=True, index=True)
     name = Column(String(100), nullable=False)
     affiliation = Column(String(100), nullable=False)
     email = Column(String(100), unique=True, nullable=False)
@@ -28,12 +28,11 @@ class User(Base):
 class Meeting(Base):
     __tablename__ = "meeting"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(String(100), ForeignKey("users.id"), nullable=False)
     title = Column(Text, nullable=False)
     summary = Column(Text, nullable=False)
-    time = Column(Time, nullable=False)
+    # time = Column(Time, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.datetime.now(JST))
-
     user = relationship("User", back_populates="meetings")
     knowledges = relationship("Knowledge", back_populates="meeting")
     challenges = relationship("Challenge", back_populates="meeting")
