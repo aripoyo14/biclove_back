@@ -25,14 +25,14 @@ class User(BaseModel):
     total_view: int = 0
     created_at: datetime.datetime | None = None
 
-class Meeting(BaseModel):
-    id: int | None = None
-    user_id: int
-    title: Annotated[str, constr(min_length = 1)]
-    summary: Annotated[str, constr(min_length = 1)]
-    time: datetime.time
-    created_at: datetime.datetime | None = None
-
+#class Meeting(BaseModel):
+#    id: int | None = None
+#    user_id: int
+#    title: Annotated[str, constr(min_length = 1)]
+#    summary: Annotated[str, constr(min_length = 1)]
+#    time: datetime.time
+#    created_at: datetime.datetime | None = None
+    
 class Knowledge(BaseModel):
     id: int | None = None
     user_id: int
@@ -163,6 +163,13 @@ def get_all_View():
     # JSON文字列をPythonオブジェクトに変換
     return json.loads(result)
 
+
+@app.post("/meeting")
+def post_finalized_meeting(newMeeting: Meeting):
+    print(newMeeting)
+    return {"res": "ok", "ID": newMeeting.id}
+
+    
 # 以下、Practicalのコード
 
 # スキーマ定義
