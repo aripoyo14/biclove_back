@@ -164,12 +164,7 @@ def get_all_View():
     return json.loads(result)
 
 
-@app.post("/meeting")
-def post_finalized_meeting(newMeeting: Meeting):
-    print(newMeeting)
-    return {"res": "ok", "ID": newMeeting.id}
-
-    
+   
 # 以下、Practicalのコード
 
 # スキーマ定義

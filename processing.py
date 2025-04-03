@@ -68,8 +68,8 @@ model = OpenAIEmbeddings(model="text-embedding-ada-002")
 
 
 class Meeting(BaseModel):
-    id: int | None = None
-    user_id: str
+    id: int
+    user_id: int
     title: str
     summary: str
     knowledge: str
@@ -89,37 +89,45 @@ def post_finalized_meeting(newMeeting: Meeting):
         newMeeting.created_at = datetime.datetime.now()
         
     # 🔥 1. Knowledge と Issues のベクトル化
-    knowledge_vector = model.embed_query(newMeeting.knowledge)
-    issues_vector = model.embed_query(newMeeting.issues)
+    try:
+        knowledge_vector = model.embed_query(newMeeting.knowledge)
+        issues_vector = model.embed_query(newMeeting.issues)
+        print("✅ ベクトル化完了 - Knowledge Vector:", knowledge_vector[:5], "Issues Vector:", issues_vector[:5])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ベクトル化エラー: {str(e)}")
+
 
     # 🔥 2. Pinecone にベクトルを保存
-    index.upsert([
-        (f"knowledge-{newMeeting.id}", knowledge_vector, {"text": newMeeting.knowledge, "type": "knowledge"}),
-        (f"issues-{newMeeting.id}", issues_vector, {"text": newMeeting.issues, "type": "issues"})
-    ])
-
-
-    # 🔥 3. Pinecone で類似検索を実行 (Issues に対する Knowledge の検索)
-    response = index.query(
-        vector=issues_vector,
-        top_k=5,
-        include_metadata=True
-    )
-    
-    # 🔥 4. 検索結果を要約する
-    knowledge_texts = [match['metadata']['text'] for match in response['matches']]
-    combined_knowledge = "\n".join(knowledge_texts)
-    
-    # OpenAI API を使って要約する
-    prompt = f"""
-    以下の情報を要約してください。内容を簡潔にまとめ、主要なポイントを抽出してください。
-
-    {combined_knowledge}
-    """
-    
     try:
+        index.upsert([
+            (f"knowledge-{newMeeting.id}", knowledge_vector, {"text": newMeeting.knowledge, "type": "knowledge"}),
+            (f"issues-{newMeeting.id}", issues_vector, {"text": newMeeting.issues, "type": "issues"})
+        ])
+        print(f"✅ Pinecone に保存成功 - ID: {newMeeting.id}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Pinecone 保存エラー: {str(e)}")
+
+
+    # 🔥 3. Pinecone で索類似検を実行 (Issues に対する Knowledge の検索)
+    try:
+        response = index.query(
+            vector=issues_vector,
+            top_k=5,
+            include_metadata=True
+        )
+        print(f"✅ 類似検索完了 - レスポンス数: {len(response['matches'])}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Pinecone 検索エラー: {str(e)}")
+    
+
+    # 🔥 4. 検索結果を要約する
+    try:
+        knowledge_texts = [match['metadata']['text'] for match in response['matches']]
+        combined_knowledge = "\n".join(knowledge_texts)
+        print(f"✅ 知識の結合完了 - {combined_knowledge[:100]}")  # 最初の100文字を表示
+
         summary_response = openai.ChatCompletion.create(
-            model="gpt-4",  # モデルを指定
+            model="gpt-4",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": prompt}
@@ -128,10 +136,12 @@ def post_finalized_meeting(newMeeting: Meeting):
             max_tokens=500
         )
         summarized_text = summary_response.choices[0].message["content"]
+        print(f"✅ 要約成功 - {summarized_text[:100]}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OpenAI API Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"OpenAI API エラー: {str(e)}")
 
-    # 🔥 5. MySQL に保存 (タイトルや要約など)
+
+    # 🔥 5. MySQL に保存
     try:
         db = SessionLocal()
         insert_query = text("""
@@ -143,18 +153,17 @@ def post_finalized_meeting(newMeeting: Meeting):
             "user_id": newMeeting.user_id,
             "title": newMeeting.title,
             "summary": newMeeting.summary,
-            "knowledge": newMeeting.knowledge,
-            "issues": newMeeting.issues,
-            "solutionSummary": summarized_text,
-            "solutionKnowledge": newMeeting.solutionKnowledge,
+            "solutionKnowledge": summarized_text,
             "created_at": newMeeting.created_at
         })
         db.commit()
+        print("✅ MySQL への保存完了")
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"MySQL Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"MySQL 保存エラー: {str(e)}")
     finally:
         db.close()
+
 
     print(f"受け取ったデータ： {newMeeting}")
     
