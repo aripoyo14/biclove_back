@@ -11,8 +11,8 @@ Base = declarative_base()
 # Usersテーブル
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
     affiliation = Column(String(100), nullable=False)
     email = Column(String(100), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
@@ -31,12 +31,13 @@ class Meeting(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     title = Column(Text, nullable=False)
     summary = Column(Text, nullable=False)
-    time = Column(Time, nullable=False)
+    # time = Column(Time, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.datetime.now(JST))
-
     user = relationship("User", back_populates="meetings")
     knowledges = relationship("Knowledge", back_populates="meeting")
     challenges = relationship("Challenge", back_populates="meeting")
+    # solutionKnowledgeが必要！
+    # 音声書き起こししたデータはDBには入れない（データ容量の観点から）
 
 # Knowledgeテーブル
 class Knowledge(Base):
@@ -103,6 +104,7 @@ class View(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     knowledge_id = Column(Integer, ForeignKey("knowledge.id"), nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.datetime.now(JST))
+
 
 # 以下、practicalのコード
 
