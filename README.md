@@ -1,7 +1,9 @@
 # biclove_back
+
 ## 起動方法
+
 ```
-# Powershell を管理者権限で起動し、以下の SQL 立ち上げのコマンドを実行
+# Powershell を管理者権限で起動し、以下の SQL 立ち上げのコマンドを実行する
 net start mysql57
 mysql --user=root --password
 exit
