@@ -88,7 +88,7 @@ def post_finalized_meeting(newMeeting: Meeting):
     if newMeeting.created_at is None:
         newMeeting.created_at = datetime.datetime.now()
         
-    # 🔥 1. Knowledge と Issues のベクトル化
+    # 🔥 1. Knowledge と Issues のベクトル化　→　🔥Knowledgeだけでいいのでは？
     try:
         knowledge_vector = model.embed_query(newMeeting.knowledge)
         issues_vector = model.embed_query(newMeeting.issues)
@@ -97,7 +97,7 @@ def post_finalized_meeting(newMeeting: Meeting):
         raise HTTPException(status_code=500, detail=f"ベクトル化エラー: {str(e)}")
 
 
-    # 🔥 2. Pinecone にベクトルを保存
+    # 🔥 2. Pinecone にベクトルを保存　→　🔥Knowledgeだけでいいのでは？また、knowledge-が不要で、ナレッジのIDとtextの項目があれば
     try:
         index.upsert([
             (f"knowledge-{newMeeting.id}", knowledge_vector, {"text": newMeeting.knowledge, "type": "knowledge"}),
