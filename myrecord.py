@@ -177,7 +177,7 @@ def create_solution_knowledge(challenge: solutionknowledge):
     指定されたナレッジの内容をもとに、解決策を生成するエンドポイント
     """
     try:
-        # ナレッジの内容をベクトル化
+        # challengeの内容をベクトル化
         challenge_vector = embeddings.embed_query(challenge.content)
         
         # ベクトル検索
