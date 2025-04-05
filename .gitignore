@@ -5,3 +5,4 @@ __pycache__/
 db_control/__pycache__
 DigiCertGlobalRootCA.crt.pem
 requirements.txt.backup
+venv/

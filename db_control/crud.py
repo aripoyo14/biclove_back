@@ -10,7 +10,7 @@ import json
 import pandas as pd
 
 from db_control.connect_MySQL import engine
-from db_control.mymodels_MySQL import User, Meeting, Knowledge, Challenge, Tag, KnowledgeTag, ChallengeTag, Thanks, View
+from db_control.mymodels_MySQL import User, Meeting, Knowledge, Challenge, Thanks, View
 
 def mysellectall(mymodel):
     # session構築
