@@ -1,22 +1,71 @@
-from fastapi import FastAPI
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
+
 from pydantic import BaseModel, constr, ConfigDict
 import requests
 import json
-from db_control import crud, mymodels_MySQL
-from typing import Annotated, List
+from typing import Annotated
 import datetime
-import pandas as pd
-from sqlalchemy.sql import select
+
+from db_control import crud, mymodels_MySQL
+
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import create_engine
+from sqlalchemy.sql import select
 
-# MySQLのテーブル作成
+from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS 
+from langchain.chains import RetrievalQA
+# from langchain_community.llms import OpenAI
+from pinecone import Pinecone, ServerlessSpec
+
+from typing import List, Optional
+from openai import OpenAI
+
+import numpy as np
+import pandas as pd
+import os
+
+# FastAPIアプリの初期化
+app = FastAPI()
+
+# OpenAIクライアントの初期化
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# CORSミドルウェアの設定
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    # allow_origins=["https://tech0-gen-9-step3-1-node-13.azurewebsites.net"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# MySQLのテーブル作成し、アプリケーション初期化時にテーブルを作成
 from db_control.create_tables_MySQL import init_db
-
-# アプリケーション初期化時にテーブルを作成
 init_db()
+
+# 環境変数の設定
+pinecone_api_key = os.getenv("PINECONE_API_KEY")
+pinecone_environment = os.getenv("PINECONE_ENVIRONMENT")
+
+# Pineconeの初期化
+pc = Pinecone(api_key=pinecone_api_key)
+index_name = "biclove-flowledge"
+
+# インデックスの確認または作成
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=1536,  # 使用するモデルの次元数
+        metric="cosine",
+        spec=ServerlessSpec(cloud="aws", region="us-east-1")
+    )
+dense_index = pc.Index(index_name)
+
+# ベクトル生成モデルの初期化
+embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
 
 # スキーマ定義
 class User(BaseModel):
@@ -76,6 +125,9 @@ class View(BaseModel):
     created_at: datetime.datetime | None = None
     model_config = ConfigDict(json_encoders={datetime.datetime: lambda dt: dt.strftime("%Y-%m-%d %H:%M:%S")})
 
+class solutionknowledge(BaseModel):
+    content: Annotated[str, constr(min_length = 1)]
+    
 # レスポンスモデルの定義
 class MeetingResponse(BaseModel):
     id: int | None = None
@@ -88,18 +140,14 @@ class MeetingResponse(BaseModel):
     knowledges: List[Knowledge] = []
     model_config = ConfigDict(json_encoders={datetime.datetime: lambda dt: dt.strftime("%Y-%m-%d %H:%M:%S")})
 
-app = FastAPI()
+class Match(BaseModel):
+    id: str
+    text: str
 
-# CORSミドルウェアの設定
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    # allow_origins=["https://tech0-gen-9-step3-1-node-13.azurewebsites.net"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+class SolutionKnowledgeResponse(BaseModel):
+    summary: str #複数のナレッジを要約したテキスト
+    knowledge_ids: List[int] #要約の元となったナレッジのknowledge_idのリスト
+    
 @app.get("/")
 def index():
     return {"message": "FastAPI Arichan part!"}
@@ -122,4 +170,51 @@ def get_latest_meeting(user_id: int = Query(..., description="ユーザーID")):
     except Exception as e:
         print(f"エラーが発生しました: {e}")
         return []
+    
+@app.post("/solution_knowledge", response_model=SolutionKnowledgeResponse)
+def create_solution_knowledge(challenge: solutionknowledge):
+    """
+    指定されたナレッジの内容をもとに、解決策を生成するエンドポイント
+    """
+    try:
+        # ナレッジの内容をベクトル化
+        challenge_vector = embeddings.embed_query(challenge.content)
+        
+        # ベクトル検索
+        response = dense_index.query(
+            top_k=5,
+            include_metadata=True,
+            vector=challenge_vector
+        )
+        
+        # 取得したナレッジを要約する
+        knowledge_texts = [match["metadata"]["text"] for match in response.get("matches", [])]
+        combined_knowledge = "\n".join(knowledge_texts)
+        
+        # 要約を生成
+        summary_response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that summarizes text."},
+                {"role": "user", "content": f"Please summarize the following text: {combined_knowledge}"}
+            ],
+            temperature=0.5,
+            max_tokens=500
+        )
+        summary = summary_response.choices[0].message.content
+        
+        # サマリーとidを返す
+        return {
+            "summary": summary,
+            "knowledge_ids": [match["id"] for match in response.get("matches", [])]
+        }
+                
+    
+    except Exception as e:
+        print(f"エラーが発生しました: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    
+
+
 
