@@ -1,28 +1,37 @@
+# FastAPI関連のインポート
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, constr
+from typing import Annotated, List, Optional
 
-import openai
-import os
-from dotenv import load_dotenv
+# データベース関連のインポート
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 from db_control import mymodels_MySQL, crud
-from db_control.connect_MySQL import engine  # 既存のエンジンを利用
-import datetime
-import re
-import traceback  # ← これを追加！
+from db_control.connect_MySQL import engine
 
+# OpenAI関連のインポート
+from openai import OpenAI  # 音声認識用の直接のOpenAIクライアント
+from langchain_openai import OpenAI as LangChainOpenAI
 from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import FAISS 
-from langchain.chains import RetrievalQA
-from langchain_openai import OpenAI
+
+# ベクトルデータベース関連のインポート
 from pinecone import Pinecone, ServerlessSpec
 
-from pydantic import BaseModel, constr
+# ユーティリティ関連のインポート
+import os
+from dotenv import load_dotenv
+import datetime
+import re
+import traceback
+import hashlib
+import time
 import numpy as np
 import requests
 import json
-from typing import Annotated, List, Optional
+
+# スキーマ関連のインポート
+from schemas import MeetingResponse, SolutionKnowledgeRequest, SolutionKnowledgeResponse
 
 # SessionLocal を定義（connect_MySQL.py の engine を利用）
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -33,10 +42,44 @@ load_dotenv()
 # OpenAI APIキーを環境変数から取得して設定
 api_key = os.getenv("OPENAI_API_KEY")
 
+# Pineconeの設定を環境変数から取得
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
+
 # 環境変数が正しく設定されているかチェック
 if not api_key:
     raise RuntimeError("OPENAI_API_KEY is not set in the environment variables.")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# 環境変数のバリデーション
+if not all([PINECONE_API_KEY, PINECONE_ENVIRONMENT, PINECONE_INDEX_NAME]):
+    raise RuntimeError("Pinecone configuration is missing in environment variables")
+
+# Pineconeクライアントの初期化
+pc = Pinecone(api_key=PINECONE_API_KEY)
+
+try:
+    # インデックスが存在するか確認
+    if PINECONE_INDEX_NAME not in pc.list_indexes().names():
+        # インデックスが存在しない場合は作成
+        pc.create_index(
+            name=PINECONE_INDEX_NAME,
+            dimension=1536,  # OpenAI text-embedding-ada-002 の次元数
+            metric="cosine",
+            spec=ServerlessSpec(
+                cloud="aws",
+                region=PINECONE_ENVIRONMENT
+            )
+        )
+    # インデックスの取得
+    index = pc.Index(PINECONE_INDEX_NAME)
+except Exception as e:
+    print(f"❌ Pineconeの初期化エラー: {str(e)}")
+    raise RuntimeError(f"Failed to initialize Pinecone: {str(e)}")
+
+embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
+
 
 #DBチェック
 for key in ["DB_HOST", "DB_USER", "DB_PASSWORD", "DB_NAME"]:
@@ -65,8 +108,8 @@ async def transcribe_audio(file_path: str):
     try:
         with open(file_path, "rb") as audio_file:
             response = client.audio.transcriptions.create(
-                file=audio_file,
-                model="whisper-1"
+                model="whisper-1",
+                file=audio_file
             )
         return response.text
     except Exception as e:
@@ -335,37 +378,161 @@ async def update_meeting(meeting_id: int, data: dict = Body(...)):
 
         db.commit()
         
-        print("✅ 1111")
+        challenges = db.query(mymodels_MySQL.Challenge).filter(mymodels_MySQL.Challenge.meeting_id == meeting_id).all()
         knowledges = db.query(mymodels_MySQL.Knowledge).filter(mymodels_MySQL.Knowledge.meeting_id == meeting_id).all()
-        print("✅ 2222", knowledges)
-        for knowledge in knowledges:
-            print("✅ 3333", knowledge)
-            print("✅ 4444", knowledge.content)
-            create_index(knowledge.content)
+
+        # Challeneges と Knowledges を一つの文書にまとめる
+        all_content = "## 課題\n-"+ "\n- ".join([challenge.content for challenge in challenges]) + "\n\n## 知見\n-"+ "\n- ".join([knowledge.content for knowledge in knowledges])
+        create_index(all_content)
         
         return {"message": "Meeting内容を更新しベクトル化しました"}
 
     finally:
         db.close()
 
-# ベクトル生成モデルの初期化 (OpenAI Embeddings を使用)
-model = OpenAIEmbeddings(model="text-embedding-ada-002")
-
-def create_index(content):
-    print("✅ 5555", content)
-    # 🔥 1. Knowledge と Issues のベクトル化　→　🔥Knowledgeだけでいいのでは？
+def create_index(content: str):
+    """
+    ナレッジの内容をベクトル化してPineconeに保存する
+    
+    Args:
+        content: ベクトル化する内容
+    """
     try:
-        knowledge_vector = model.embed_query(content)
-        print("✅ ベクトル化完了 - Knowledge Vector:", knowledge_vector[:5])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"ベクトル化エラー: {str(e)}")
+        # ベクトル化
+        knowledge_vector = embeddings.embed_query(content)
+        
+        # ユニークなIDを生成（タイムスタンプとハッシュを使用）
+        unique_id = hashlib.md5(content.encode()).hexdigest()
+        vector_id = f"vec_{int(time.time())}_{unique_id[:10]}"
 
-
-    # 🔥 2. Pinecone にベクトルを保存　→　🔥Knowledgeだけでいいのでは？また、knowledge-が不要で、ナレッジのIDとtextの項目があれば
-    try:
+        # Pineconeへの保存
         index.upsert([
-            (f"knowledge-{knowledge.id}", knowledge_vector, {"text": knowledge}),
+            (
+                vector_id, 
+                knowledge_vector,
+                {
+                    "content": content,
+                    "created_at": datetime.datetime.now().isoformat()
+                }
+            )
         ])
-        print(f"✅ Pinecone に保存成功 - ID: {knowledge.id}")
+        
+        return {"status": "success", "vector_id": vector_id}
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Pinecone 保存エラー: {str(e)}")
+        print("❌️ ", str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "ベクトル化処理に失敗しました"}
+        )
+
+@app.get("/vectors")
+async def get_all_vectors():
+    try:
+        # まずインデックスの統計を取得
+        stats = index.describe_index_stats()
+        total_vectors = stats['total_vector_count']
+        
+        # インデックス内のすべてのベクトルを取得
+        fetch_response = index.query(
+            vector=[0] * 1536,  # ダミーのクエリベクトル
+            top_k=total_vectors,
+            include_metadata=True
+        )
+        
+        # レスポンスデータを整形（循環参照を避ける）
+        vectors = []
+        for match in fetch_response['matches']:
+            vector_data = {
+                "id": match.id,
+                "score": float(match.score) if match.score else None,  # numpy.float64をPythonのfloatに変換
+                "metadata": match.metadata
+            }
+            vectors.append(vector_data)
+        
+        return {
+            "total_vectors": total_vectors,
+            "vectors": vectors
+        }
+    except Exception as e:
+        error_detail = {
+            "message": str(e),
+            "type": type(e).__name__,
+            "traceback": traceback.format_exc()
+        }
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "ベクトル取得エラー", "details": error_detail}
+        )
+
+@app.get("/latest_meeting", response_model=List[MeetingResponse])
+def get_latest_meeting(user_id: int = Query(..., description="ユーザーID")):
+    """
+    指定されたユーザーIDの最新の会議データと関連するチャレンジとナレッジを取得するエンドポイント
+    """
+    try:
+        result = crud.get_meeting_with_related_data_using_join_optimized(user_id=user_id, limit=4)
+        return result
+    except Exception as e:
+        print(f"エラーが発生しました: {e}")
+        return []
+
+
+@app.post("/solution_knowledge", response_model=SolutionKnowledgeResponse)
+def create_solution_knowledge(challenge: SolutionKnowledgeRequest):
+    """
+    指定されたナレッジの内容をもとに、解決策を生成するエンドポイント
+    """
+    try:
+        # チャレンジ内容をベクトル化
+        challenge_vector = embeddings.embed_query(challenge.content)
+
+        # Pinecone によるベクトル検索
+        response = index.query(
+            top_k=5,
+            include_metadata=True,
+            vector=challenge_vector
+        )
+
+        # ナレッジをまとめて要約
+        print(response)
+        knowledge_texts = [match["metadata"]["content"] for match in response.get("matches", [])]
+        combined_knowledge = "\n".join(knowledge_texts)
+        print(combined_knowledge)
+
+        # GPT による要約生成
+        summary_response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "以下のユーザーの質問に対する回答をコンテキスト情報を元に500文字以内で生成してください。コンテキスト情報に含まれない内容は回答しないでください"},
+                {"role": "user", "content": f"""
+ユーザーの質問：
+{challenge.content}
+
+コンテキスト：
+{combined_knowledge}
+"""
+        }
+            ],
+            temperature=0.5,
+            max_tokens=500
+        )
+
+        summary = summary_response.choices[0].message.content
+
+        # ナレッジ ID を取得
+        knowledge_ids = [match["id"] for match in response.get("matches", [])]
+        # ナレッジの詳細情報を取得
+        # knowledges = crud.get_knowledge_details(knowledge_ids)
+
+        # print("✅ knowledges")
+        # print(knowledges)   
+
+        return {
+            "summary": summary,
+            "knowledges": knowledge_ids
+        }
+
+    except Exception as e:
+        print(f"エラーが発生しました: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
