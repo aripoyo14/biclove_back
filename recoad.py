@@ -190,7 +190,7 @@ async def root():
     return {"message": "Recoad API is running independently!"}
 
 # 音声ファイルを受け取り、文字起こしし、データベースに保存するエンドポイント
-@app.post("/upload-audio/")
+@app.post("/upload-audio")
 async def upload_audio(
     file: UploadFile = File(...),
     user_id: int = Form(...) # ← フロントから受け取る！
