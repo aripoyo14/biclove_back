@@ -1,15 +1,28 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from openai import OpenAI
+
+import openai
 import os
 from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
-from db_control import mymodels_MySQL
+from db_control import mymodels_MySQL, crud
 from db_control.connect_MySQL import engine  # 既存のエンジンを利用
 import datetime
 import re
 import traceback  # ← これを追加！
 
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS 
+from langchain.chains import RetrievalQA
+from langchain_openai import OpenAI
+from pinecone import Pinecone, ServerlessSpec
+
+from pydantic import BaseModel, constr
+import numpy as np
+import requests
+import json
+from typing import Annotated, List, Optional
 
 # SessionLocal を定義（connect_MySQL.py の engine を利用）
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -161,7 +174,7 @@ async def upload_audio(
                 user_id=user_id,
                 title=title,
                 summary=parsed["summary"],#パースで分ける
-                time=datetime.time(hour=0, minute=30)  # 仮時間
+                #time=datetime.time(hour=0, minute=30)  # 仮時間
             )
             db.add(new_meeting)
             db.commit()
@@ -262,6 +275,24 @@ async def get_summary(meeting_id: int):
     finally:
         db.close()
         
+@app.get("/get-knowledge/{meeting_id}")
+async def get_knowledge(meeting_id: int):
+    db: Session = SessionLocal()
+    try:
+        knowledges = db.query(mymodels_MySQL.Knowledge).filter(mymodels_MySQL.Knowledge.meeting_id == meeting_id).all()
+        return knowledges
+
+        # 文字起こしデータを要約
+        #summary = generate_summary(meeting.transcript)
+
+        # DBに要約を保存
+        #meeting.summary = summary
+        db.commit()
+        return {"result": "error"}
+
+    finally:
+        db.close()
+        
 # フロント側で編集された会議情報を更新するエンドポイント
 @app.put("/update-meeting/{meeting_id}")
 async def update_meeting(meeting_id: int, data: dict = Body(...)):
@@ -289,7 +320,7 @@ async def update_meeting(meeting_id: int, data: dict = Body(...)):
                     tag = next((t for t in all_tags if t.name == tag_name), None)
                     if tag:
                         knowledge.tags.append(tag)
-
+                        
         # 課題の更新
         for c in data.get("challenges", []):
             challenge = db.query(mymodels_MySQL.Challenge).filter_by(id=c["id"]).first()
@@ -303,8 +334,38 @@ async def update_meeting(meeting_id: int, data: dict = Body(...)):
                         challenge.tags.append(tag)
 
         db.commit()
-        return {"message": "Meeting内容を更新しました"}
+        
+        print("✅ 1111")
+        knowledges = db.query(mymodels_MySQL.Knowledge).filter(mymodels_MySQL.Knowledge.meeting_id == meeting_id).all()
+        print("✅ 2222", knowledges)
+        for knowledge in knowledges:
+            print("✅ 3333", knowledge)
+            print("✅ 4444", knowledge.content)
+            create_index(knowledge.content)
+        
+        return {"message": "Meeting内容を更新しベクトル化しました"}
 
     finally:
         db.close()
 
+# ベクトル生成モデルの初期化 (OpenAI Embeddings を使用)
+model = OpenAIEmbeddings(model="text-embedding-ada-002")
+
+def create_index(content):
+    print("✅ 5555", content)
+    # 🔥 1. Knowledge と Issues のベクトル化　→　🔥Knowledgeだけでいいのでは？
+    try:
+        knowledge_vector = model.embed_query(content)
+        print("✅ ベクトル化完了 - Knowledge Vector:", knowledge_vector[:5])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ベクトル化エラー: {str(e)}")
+
+
+    # 🔥 2. Pinecone にベクトルを保存　→　🔥Knowledgeだけでいいのでは？また、knowledge-が不要で、ナレッジのIDとtextの項目があれば
+    try:
+        index.upsert([
+            (f"knowledge-{knowledge.id}", knowledge_vector, {"text": knowledge}),
+        ])
+        print(f"✅ Pinecone に保存成功 - ID: {knowledge.id}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Pinecone 保存エラー: {str(e)}")
