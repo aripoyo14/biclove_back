@@ -140,13 +140,15 @@ class MeetingResponse(BaseModel):
     knowledges: List[Knowledge] = []
     model_config = ConfigDict(json_encoders={datetime.datetime: lambda dt: dt.strftime("%Y-%m-%d %H:%M:%S")})
 
+# RAG用のモデル
 class Match(BaseModel):
     id: str
     text: str
 
+# RAG用のモデル
 class SolutionKnowledgeResponse(BaseModel):
     summary: str #複数のナレッジを要約したテキスト
-    knowledge_ids: List[int] #要約の元となったナレッジのknowledge_idのリスト
+    knowledges: List[dict] = [] #ナレッジの詳細情報（title, content, user_id, user_name）
     
 @app.get("/")
 def index():
@@ -201,15 +203,21 @@ def create_solution_knowledge(challenge: solutionknowledge):
             temperature=0.5,
             max_tokens=500
         )
+        
         summary = summary_response.choices[0].message.content
         
-        # サマリーとidを返す
+        # ナレッジIDを取得
+        knowledge_ids = [int(match["id"]) for match in response.get("matches", [])]
+        
+        # ナレッジの詳細情報を取得
+        knowledges = crud.get_knowledge_details(knowledge_ids)
+        
+        # サマリーとidとナレッジの詳細情報を返す
         return {
             "summary": summary,
-            "knowledge_ids": [match["id"] for match in response.get("matches", [])]
+            "knowledges": knowledges
         }
                 
-    
     except Exception as e:
         print(f"エラーが発生しました: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -8,6 +8,7 @@ import sqlalchemy
 from sqlalchemy.orm import sessionmaker
 import json
 import pandas as pd
+from typing import List
 
 from db_control.connect_MySQL import engine
 from db_control.mymodels_MySQL import User, Meeting, Knowledge, Challenge, Tag, KnowledgeTag, ChallengeTag, Thanks, View
@@ -292,3 +293,39 @@ def get_meeting_with_related_data_using_join_optimized(user_id: int = None, limi
 #         result.append(meeting)
     
 #     return result
+
+def get_knowledge_details(knowledge_ids: List[int]):
+    """
+    指定されたナレッジIDの詳細情報を取得する関数
+    
+    Args:
+        knowledge_ids (List[int]): ナレッジIDのリスト
+        
+    Returns:
+        list: ナレッジの詳細情報のリスト（ユーザー名を含む）
+    """
+    # session構築
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    
+    try:
+        # ナレッジとユーザーの情報を結合して取得
+        query = select(
+            Knowledge.id,
+            Knowledge.title,
+            Knowledge.content,
+            Knowledge.user_id,
+            User.name.label('user_name')
+        ).join(
+            User, Knowledge.user_id == User.id
+        ).where(Knowledge.id.in_(knowledge_ids))
+        
+        df = pd.read_sql_query(query, con=engine)
+        result = json.loads(df.to_json(orient='records', force_ascii=False))
+        
+        return result
+    except sqlalchemy.exc.IntegrityError:
+        print("一意制約違反により、取得に失敗しました")
+        return []
+    finally:
+        session.close()
