@@ -45,7 +45,7 @@ api_key = os.getenv("OPENAI_API_KEY")
 # Pineconeの設定を環境変数から取得
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX")
 
 # 環境変数が正しく設定されているかチェック
 if not api_key:
