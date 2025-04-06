@@ -161,6 +161,49 @@ def generate_title(text: str) -> str:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Title generation error: {e}")
 
+# ★20250405追加==================================================
+# knowledgeのタイトルをGPTで生成
+def generate_knowledge_title(content: str) -> str:
+    try:
+        prompt = f"""
+以下の内容は会議から得られた知見の一つです。この知見にふさわしいタイトルを「日本語で」「10〜30文字以内」で1つだけ提案してください。
+内容: {content}
+"""
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "あなたは知見タイトル生成のプロです。"},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print("❌ 知見タイトル生成エラー:", e)
+        return "自動生成知見タイトル"
+
+# challengeのタイトルをGPTで生成
+def generate_challenge_title(content: str) -> str:
+    try:
+        prompt = f"""
+以下の内容は会議で議論された課題の一つです。この課題にふさわしいタイトルを「日本語で」「10〜30文字以内」で1つだけ提案してください。
+内容: {content}
+"""
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "あなたは課題タイトル生成のプロです。"},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print("❌ 課題タイトル生成エラー:", e)
+        return "自動生成課題タイトル"
+
+# ★20250405追加ここまで==================================================
+
+
+# ★20250405書き換え（うまく箇条書きで出なかったためパースをもっとわかりやすく書き換えた）==================================
 # GPT出力のパース関数（要約 / 知見 / 悩み に分ける）
 def parse_summary_response(summary_text: str) -> dict:
     try:
@@ -169,16 +212,32 @@ def parse_summary_response(summary_text: str) -> dict:
         challenge_match = re.search(r"③【悩み】\n?(.*)", summary_text, re.DOTALL)
 
         summary = summary_match.group(1).strip() if summary_match else ""
-        knowledge = [line.lstrip("-・ ").strip() for line in knowledge_match.group(1).split("\n") if line.strip()] if knowledge_match else []
-        challenge = [line.lstrip("-・ ").strip() for line in challenge_match.group(1).split("\n") if line.strip()] if challenge_match else []
+
+        def parse_items(block_text):
+            items = []
+            blocks = re.split(r"-\s*", block_text.strip())
+            for block in blocks:
+                if not block.strip():
+                    continue
+                title_match = re.search(r"タイトル[:：](.+)", block)
+                content_match = re.search(r"内容[:：](.+)", block, re.DOTALL)
+                title = title_match.group(1).strip() if title_match else "タイトル不明"
+                content = content_match.group(1).strip() if content_match else block.strip()
+                items.append({"title": title, "content": content})
+            return items
+
+        knowledges = parse_items(knowledge_match.group(1)) if knowledge_match else []
+        challenges = parse_items(challenge_match.group(1)) if challenge_match else []
 
         return {
             "summary": summary,
-            "knowledges": knowledge,
-            "challenges": challenge,
+            "knowledges": knowledges,
+            "challenges": challenges,
         }
+
     except Exception as e:
         raise ValueError(f"GPT出力のパースに失敗しました: {e}")
+# ★20250405書き換えここまで==================================================
 
 # タグ名とテキストが部分一致するかチェック
 def find_matching_tags(text: str, tags: list) -> list:
@@ -226,14 +285,15 @@ async def upload_audio(
             meeting_id = new_meeting.id  # ← セッションを閉じる前にIDを保持！
             
             #知見登録
-            for knowledge_content in parsed["knowledges"]: #パースで分ける
+            for knowledge_item in parsed["knowledges"]:#パースで分ける
+                knowledge_title = generate_knowledge_title(knowledge_item["content"]) #　←　20250404修正
                 knowledge = mymodels_MySQL.Knowledge(
                     user_id=user_id,
                     meeting_id=meeting_id,
-                    title="自動生成知見タイトル",
-                    content=knowledge_content
+                    title=knowledge_title,            #　←　20250404修正
+                    content=knowledge_item["content"] #　←　20250404修正
                 )
-                matched_tags = find_matching_tags(knowledge_content, all_tags)
+                matched_tags = find_matching_tags(knowledge_item["content"], all_tags) #　←　20250404修正
                 for tag_name in matched_tags:
                     tag = db.query(mymodels_MySQL.Tag).filter_by(name=tag_name).first()
                     if tag and tag not in knowledge.tags:
@@ -241,14 +301,16 @@ async def upload_audio(
                 db.add(knowledge)
                 
             # 悩み登録
-            for challenge_content in parsed["challenges"]: #パースで分ける
+            for challenge_item in parsed["challenges"]: #パースで分ける
+                challenge_title = generate_challenge_title(challenge_item["content"]) #　←　20250404修正
                 challenge = mymodels_MySQL.Challenge(
                     user_id=user_id,
                     meeting_id=meeting_id,
-                    title="自動生成課題タイトル",
-                    content=challenge_content
+                    title=challenge_title,            #　←　20250404修正
+                    content=challenge_item["content"] #　←　20250404修正
                 )
-                matched_tags = find_matching_tags(challenge_content, all_tags)
+                    
+                matched_tags = find_matching_tags(challenge_item["content"], all_tags) #　←　20250404修正
                 for tag_name in matched_tags:
                     tag = db.query(mymodels_MySQL.Tag).filter_by(name=tag_name).first()
                     if tag and tag not in challenge.tags:
