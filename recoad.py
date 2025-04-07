@@ -332,7 +332,7 @@ async def upload_audio(
                 "knowledges": [
                     {
                         "id": k.id,
-                        "content": k.content
+                        "content": k.content  
                     }
                     for k in db.query(mymodels_MySQL.Knowledge).filter_by(meeting_id=meeting_id).all()
                 ],
@@ -473,7 +473,7 @@ def create_index(content: str):
                 vector_id, 
                 knowledge_vector,
                 {
-                    "content": content,
+                    "text": content,
                     "created_at": datetime.datetime.now().isoformat()
                 }
             )
@@ -558,7 +558,10 @@ def create_solution_knowledge(challenge: SolutionKnowledgeRequest):
 
         # ナレッジをまとめて要約
         print(response)
-        knowledge_texts = [match["metadata"]["content"] for match in response.get("matches", [])]
+        knowledge_texts = [match["metadata"]["text"] for match in response.get("matches", [])]
+        
+        print("----------",knowledge_texts)
+        
         combined_knowledge = "\n".join(knowledge_texts)
         print(combined_knowledge)
 
@@ -579,11 +582,15 @@ def create_solution_knowledge(challenge: SolutionKnowledgeRequest):
             temperature=0.5,
             max_tokens=500
         )
+        
+        print("summary_response",summary_response)
 
         summary = summary_response.choices[0].message.content
+        
+        print("summary",summary)
 
         # ナレッジ ID を取得
-        knowledge_ids = [match["id"] for match in response.get("matches", [])]
+        # knowledge_ids = [match["id"] for match in response.get("matches", [])]
         # ナレッジの詳細情報を取得
         # knowledges = crud.get_knowledge_details(knowledge_ids)
 
@@ -592,7 +599,7 @@ def create_solution_knowledge(challenge: SolutionKnowledgeRequest):
 
         return {
             "summary": summary,
-            "knowledges": knowledge_ids
+            #"knowledges": knowledge_ids
         }
 
     except Exception as e:
