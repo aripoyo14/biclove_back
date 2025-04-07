@@ -447,7 +447,10 @@ async def update_meeting(meeting_id: int, data: dict = Body(...)):
         all_content = "## 課題\n-"+ "\n- ".join([challenge.content for challenge in challenges]) + "\n\n## 知見\n-"+ "\n- ".join([knowledge.content for knowledge in knowledges])
         create_index(all_content)
         
-        return {"message": "Meeting内容を更新しベクトル化しました"}
+        return {
+            "message": "Meeting内容を更新しベクトル化しました",
+            "meeting_id": meeting_id
+            }
 
     finally:
         db.close()
