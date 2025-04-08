@@ -41,11 +41,11 @@ class Meeting(Base):
     title = Column(Text, nullable=False)
     summary = Column(Text, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.datetime.now(JST))
-
     user = relationship("User", back_populates="meetings")
     knowledges = relationship("Knowledge", back_populates="meeting")
-    challenges = relationship("Challenge", back_populates="meeting")
-
+    challenges = relationship("Challenge", back_populates="meeting")    
+    # solutionKnowledgeが必要！
+    # 音声書き起こししたデータはDBには入れない（データ容量の観点から）
 
 # -------------------------------
 # Knowledge テーブル

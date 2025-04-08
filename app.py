@@ -50,7 +50,7 @@ if index_name not in pc.list_indexes().names():
         metric="cosine",
         spec=ServerlessSpec(cloud="aws", region="us-east-1")
     )
-dense_index = pc.Index(index_name)
+index = pc.Index(index_name)
 
 # ベクトル生成モデルの初期化
 embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
@@ -77,7 +77,6 @@ def get_latest_meeting(user_id: int = Query(..., description="ユーザーID")):
         print(f"エラーが発生しました: {e}")
         return []
 
-
 @app.post("/solution_knowledge", response_model=SolutionKnowledgeResponse)
 def create_solution_knowledge(challenge: SolutionKnowledgeRequest):
     """
@@ -88,7 +87,7 @@ def create_solution_knowledge(challenge: SolutionKnowledgeRequest):
         challenge_vector = embeddings.embed_query(challenge.content)
 
         # Pinecone によるベクトル検索
-        response = dense_index.query(
+        response = index.query(
             top_k=5,
             include_metadata=True,
             vector=challenge_vector
