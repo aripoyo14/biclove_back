@@ -285,36 +285,25 @@ async def upload_audio(
             meeting_id = new_meeting.id  # ← セッションを閉じる前にIDを保持！
             
             #知見登録
-            for knowledge_item in parsed["knowledges"]:#パースで分ける
-                knowledge_title = generate_knowledge_title(knowledge_item["content"]) #　←　20250404修正
+            for knowledge_item in parsed["knowledges"]:
+                knowledge_title = generate_knowledge_title(knowledge_item["content"])
                 knowledge = mymodels_MySQL.Knowledge(
                     user_id=user_id,
                     meeting_id=meeting_id,
-                    title=knowledge_title,            #　←　20250404修正
-                    content=knowledge_item["content"] #　←　20250404修正
+                    title=knowledge_title,
+                    content=knowledge_item["content"]
                 )
-                matched_tags = find_matching_tags(knowledge_item["content"], all_tags) #　←　20250404修正
-                for tag_name in matched_tags:
-                    tag = db.query(mymodels_MySQL.Tag).filter_by(name=tag_name).first()
-                    if tag and tag not in knowledge.tags:
-                        knowledge.tags.append(tag)
                 db.add(knowledge)
                 
             # 悩み登録
-            for challenge_item in parsed["challenges"]: #パースで分ける
-                challenge_title = generate_challenge_title(challenge_item["content"]) #　←　20250404修正
+            for challenge_item in parsed["challenges"]:
+                challenge_title = generate_challenge_title(challenge_item["content"])
                 challenge = mymodels_MySQL.Challenge(
                     user_id=user_id,
                     meeting_id=meeting_id,
-                    title=challenge_title,            #　←　20250404修正
-                    content=challenge_item["content"] #　←　20250404修正
+                    title=challenge_title,
+                    content=challenge_item["content"]
                 )
-                    
-                matched_tags = find_matching_tags(challenge_item["content"], all_tags) #　←　20250404修正
-                for tag_name in matched_tags:
-                    tag = db.query(mymodels_MySQL.Tag).filter_by(name=tag_name).first()
-                    if tag and tag not in challenge.tags:
-                        challenge.tags.append(tag)
                 db.add(challenge)
                 
             db.commit()
