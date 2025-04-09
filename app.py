@@ -1,17 +1,33 @@
-# FastAPI関連のインポート
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, constr
 from typing import Annotated, List, Optional
 
-# データベース関連のインポート
+# DB関連のインポート
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
-from db_control import mymodels_MySQL, crud
+from db_control import mymodels_MySQL, crud 
 from db_control.connect_MySQL import engine
+from db_control.create_tables_MySQL import init_db
+from db_control.crud import (
+    get_meeting_with_related_data_using_join_optimized,
+    get_knowledge_details,
+    create_index,
+    get_all_vectors,
+    save_meeting_with_knowledge_and_challenge,
+    get_meeting_summary,
+    get_meeting_knowledges
+)
+
+# スキーマ関連のインポート
+from schemas import (
+    SolutionKnowledgeRequest,
+    SolutionKnowledgeResponse,
+    MeetingResponse
+)
 
 # OpenAI関連のインポート
-from openai import OpenAI  # 音声認識用の直接のOpenAIクライアント
+from openai import OpenAI
 from langchain_openai import OpenAI as LangChainOpenAI
 from langchain_openai import OpenAIEmbeddings
 
@@ -30,9 +46,6 @@ import numpy as np
 import requests
 import json
 
-# スキーマ関連のインポート
-from schemas import MeetingResponse, SolutionKnowledgeRequest, SolutionKnowledgeResponse
-
 # SessionLocal を定義（connect_MySQL.py の engine を利用）
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -42,15 +55,15 @@ load_dotenv()
 # OpenAI APIキーを環境変数から取得して設定
 api_key = os.getenv("OPENAI_API_KEY")
 
-# Pineconeの設定を環境変数から取得
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX")
-
 # 環境変数が正しく設定されているかチェック
 if not api_key:
     raise RuntimeError("OPENAI_API_KEY is not set in the environment variables.")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# 環境変数の取得
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX")
 
 # 環境変数のバリデーション
 if not all([PINECONE_API_KEY, PINECONE_ENVIRONMENT, PINECONE_INDEX_NAME]):
@@ -59,6 +72,8 @@ if not all([PINECONE_API_KEY, PINECONE_ENVIRONMENT, PINECONE_INDEX_NAME]):
 # Pineconeクライアントの初期化
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
+
+# インデックスの確認または作成
 try:
     # インデックスが存在するか確認
     if PINECONE_INDEX_NAME not in pc.list_indexes().names():
@@ -78,26 +93,28 @@ except Exception as e:
     print(f"❌ Pineconeの初期化エラー: {str(e)}")
     raise RuntimeError(f"Failed to initialize Pinecone: {str(e)}")
 
+# ベクトル生成モデルの初期化
 embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
-
 
 #DBチェック
 for key in ["DB_HOST", "DB_USER", "DB_PASSWORD", "DB_NAME"]:
     if not os.getenv(key):
         raise RuntimeError(f"Missing database config: {key}")
 
-
-# FastAPIアプリの作成
+# FastAPI アプリの初期化
 app = FastAPI()
 
-# CORS設定（フロントエンドと通信を可能にする）
+# CORS ミドルウェアの設定（フロントエンドと通信を可能にする）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # セキュリティを考慮して本番環境では制限する
+    allow_origins=["*"], # セキュリティを考慮して本番環境では制限する
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# MySQL のテーブル作成（アプリ起動時に実行）※役割調べないといけない
+init_db()
 
 # アップロードされた音声ファイルを保存するディレクトリを作成
 UPLOAD_DIR = "./uploads"
@@ -157,11 +174,10 @@ def generate_title(text: str) -> str:
                 {"role": "user", "content": prompt}
             ]
         )
-        return response.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip().strip('"')
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Title generation error: {e}")
 
-# ★20250405追加==================================================
 # knowledgeのタイトルをGPTで生成
 def generate_knowledge_title(content: str) -> str:
     try:
@@ -176,7 +192,7 @@ def generate_knowledge_title(content: str) -> str:
                 {"role": "user", "content": prompt}
             ]
         )
-        return response.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip().strip('"')
     except Exception as e:
         print("❌ 知見タイトル生成エラー:", e)
         return "自動生成知見タイトル"
@@ -195,15 +211,11 @@ def generate_challenge_title(content: str) -> str:
                 {"role": "user", "content": prompt}
             ]
         )
-        return response.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip().strip('"')
     except Exception as e:
         print("❌ 課題タイトル生成エラー:", e)
         return "自動生成課題タイトル"
 
-# ★20250405追加ここまで==================================================
-
-
-# ★20250405書き換え（うまく箇条書きで出なかったためパースをもっとわかりやすく書き換えた）==================================
 # GPT出力のパース関数（要約 / 知見 / 悩み に分ける）
 def parse_summary_response(summary_text: str) -> dict:
     try:
@@ -237,24 +249,20 @@ def parse_summary_response(summary_text: str) -> dict:
 
     except Exception as e:
         raise ValueError(f"GPT出力のパースに失敗しました: {e}")
-# ★20250405書き換えここまで==================================================
 
-# タグ名とテキストが部分一致するかチェック
-def find_matching_tags(text: str, tags: list) -> list:
-    return [tag.name for tag in tags if tag.name in text]
+# -------------------------------
+# ルーティング
+# -------------------------------
 
-
-# ルートエンドポイント（APIが稼働しているか確認する用）
 @app.get("/")
-async def root():
-    return {"message": "FastAPI is running!"}
-
+def home():
+    return {"message": "Thank you for attending biclove-flowledge!"}
 
 # 音声ファイルを受け取り、文字起こしし、データベースに保存するエンドポイント
 @app.post("/upload-audio")
 async def upload_audio(
     file: UploadFile = File(...),
-    user_id: int = Form(...) # ← フロントから受け取る！
+    user_id: int = Form(...)
 ):
     try:
         # 音声ファイルをサーバーに保存
@@ -265,98 +273,45 @@ async def upload_audio(
         # 文字起こし処理
         transcript = await transcribe_audio(file_path)
         
-        # 要約処理
+        # 要約生成とパース
         summary_text = generate_summary(transcript)
-        parsed = parse_summary_response(summary_text) #パースで分ける
+        parsed = parse_summary_response(summary_text)
         title = generate_title(parsed["summary"])
         
-        # データベースに保存
+        # データベースへの登録
         db: Session = SessionLocal()
         try:
-            all_tags = db.query(mymodels_MySQL.Tag).all()
-            new_meeting = mymodels_MySQL.Meeting(
+            # 会議、知見、課題を保存
+            response_data = save_meeting_with_knowledge_and_challenge(
+                db=db,
                 user_id=user_id,
                 title=title,
-                summary=parsed["summary"],#パースで分ける
-                #time=datetime.time(hour=0, minute=30)  # 仮時間
+                summary=parsed["summary"],
+                knowledges=[
+                    {
+                        "title": generate_knowledge_title(item["content"]),
+                        "content": item["content"]
+                    }
+                    for item in parsed["knowledges"]
+                ],
+                challenges=[
+                    {
+                        "title": generate_challenge_title(item["content"]),
+                        "content": item["content"]
+                    }
+                    for item in parsed["challenges"]
+                ]
             )
-            db.add(new_meeting)
-            db.commit()
-            db.refresh(new_meeting)
             
-            meeting_id = new_meeting.id  # ← セッションを閉じる前にIDを保持！
+            # トランスクリプトを追加
+            response_data["transcript"] = transcript
+            response_data["message"] = "Meeting + 知見 + 悩み 登録完了"
             
-            #知見登録
-            for knowledge_item in parsed["knowledges"]:#パースで分ける
-                knowledge_title = generate_knowledge_title(knowledge_item["content"]) #　←　20250404修正
-                knowledge = mymodels_MySQL.Knowledge(
-                    user_id=user_id,
-                    meeting_id=meeting_id,
-                    title=knowledge_title,            #　←　20250404修正
-                    content=knowledge_item["content"] #　←　20250404修正
-                )
-                matched_tags = find_matching_tags(knowledge_item["content"], all_tags) #　←　20250404修正
-                for tag_name in matched_tags:
-                    tag = db.query(mymodels_MySQL.Tag).filter_by(name=tag_name).first()
-                    if tag and tag not in knowledge.tags:
-                        knowledge.tags.append(tag)
-                db.add(knowledge)
-                
-            # 悩み登録
-            for challenge_item in parsed["challenges"]: #パースで分ける
-                challenge_title = generate_challenge_title(challenge_item["content"]) #　←　20250404修正
-                challenge = mymodels_MySQL.Challenge(
-                    user_id=user_id,
-                    meeting_id=meeting_id,
-                    title=challenge_title,            #　←　20250404修正
-                    content=challenge_item["content"] #　←　20250404修正
-                )
-                    
-                matched_tags = find_matching_tags(challenge_item["content"], all_tags) #　←　20250404修正
-                for tag_name in matched_tags:
-                    tag = db.query(mymodels_MySQL.Tag).filter_by(name=tag_name).first()
-                    if tag and tag not in challenge.tags:
-                        challenge.tags.append(tag)
-                db.add(challenge)
-                
-            db.commit()
-                
+            return response_data
         finally:
             db.close()
-
-        response_data = {
-            "message": "Meeting + 知見 + 悩み 登録完了",
-            "meeting_id": meeting_id,
-            "title": title,
-            "transcript": transcript,
-            "parsed_summary": {
-                "summary": parsed["summary"],
-                "knowledges": [
-                    {
-                        "id": k.id,
-                        "content": k.content  
-                    }
-                    for k in db.query(mymodels_MySQL.Knowledge).filter_by(meeting_id=meeting_id).all()
-                ],
-                "challenges": [
-                    {
-                        "id": c.id,
-                        "content": c.content
-                    }
-                    for c in db.query(mymodels_MySQL.Challenge).filter_by(meeting_id=meeting_id).all()
-                ]
-            }
-        }
-
-        # 🔒 DBセッションを閉じる
-        db.close()
-
-        # 📤 セッション終了後にreturnする！
-        return response_data
-
-            
     except Exception as e:
-        traceback.print_exc()  # ← ★追加
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 # 会議の文字起こしデータを取得し、要約を生成するエンドポイント(ORM版)
@@ -364,173 +319,82 @@ async def upload_audio(
 async def get_summary(meeting_id: int):
     db: Session = SessionLocal()
     try:
-        meeting = db.query(mymodels_MySQL.Meeting).filter(mymodels_MySQL.Meeting.id == meeting_id).first()
-        if not meeting:
-            raise HTTPException(status_code=404, detail="Meeting not found")
-
-        if meeting.summary:
-            return {"summary": meeting.summary}
-
-        # 文字起こしデータを要約
-        summary = generate_summary(meeting.transcript)
-
-        # DBに要約を保存
-        meeting.summary = summary
-        db.commit()
-        return {"summary": summary}
-
+        return get_meeting_summary(db, meeting_id)
     finally:
         db.close()
-        
+
 @app.get("/get-knowledge/{meeting_id}")
 async def get_knowledge(meeting_id: int):
     db: Session = SessionLocal()
     try:
-        knowledges = db.query(mymodels_MySQL.Knowledge).filter(mymodels_MySQL.Knowledge.meeting_id == meeting_id).all()
-        return knowledges
-
-        # 文字起こしデータを要約
-        #summary = generate_summary(meeting.transcript)
-
-        # DBに要約を保存
-        #meeting.summary = summary
-        db.commit()
-        return {"result": "error"}
-
+        return get_meeting_knowledges(db, meeting_id)
     finally:
         db.close()
-        
+
 # フロント側で編集された会議情報を更新するエンドポイント
 @app.put("/update-meeting/{meeting_id}")
 async def update_meeting(meeting_id: int, data: dict = Body(...)):
+    """
+    フロント側で編集された会議情報、知見、悩みの内容を更新し、
+    更新された知見についてはベクトルDB（例：Pinecone）にも登録する。
+    
+    Args:
+        meeting_id (int): 更新対象の会議ID
+        data (dict): 更新対象のデータ {"title": ..., "summary": ...,
+                  "knowledges": [{"id": ..., "title": ..., "content": ...}, ...],
+                  "challenges": [{"id": ..., "title": ..., "content": ...}, ...]}
+    """
     db: Session = SessionLocal()
     try:
+        # 1. 会議情報の取得と更新
         meeting = db.query(mymodels_MySQL.Meeting).filter_by(id=meeting_id).first()
         if not meeting:
             raise HTTPException(status_code=404, detail="Meeting not found")
 
-        # タイトル・サマリを更新
         meeting.title = data.get("title", meeting.title)
         meeting.summary = data.get("summary", meeting.summary)
-
-        # タグ一覧取得（名前で紐付け）
-        all_tags = db.query(mymodels_MySQL.Tag).all()
-
-        # 知見の更新
+        
+        # 2. 更新済み知見をまとめるリスト
+        updated_knowledges = []
+        
+        # 3. 知見の更新
         for k in data.get("knowledges", []):
             knowledge = db.query(mymodels_MySQL.Knowledge).filter_by(id=k["id"]).first()
             if knowledge:
-                knowledge.title = k["title"]
-                knowledge.content = k["content"]
-                knowledge.tags = []  # 一旦タグを空にする
-                for tag_name in k.get("tags", []):
-                    tag = next((t for t in all_tags if t.name == tag_name), None)
-                    if tag:
-                        knowledge.tags.append(tag)
-                        
-        # 課題の更新
+                knowledge.title = k.get("title", knowledge.title)
+                knowledge.content = k.get("content", knowledge.content)
+                db.add(knowledge)
+                updated_knowledges.append({
+                    "id": knowledge.id,
+                    "content": knowledge.content
+                })
+        
+        # 4. 悩み（Challenge）の更新
         for c in data.get("challenges", []):
             challenge = db.query(mymodels_MySQL.Challenge).filter_by(id=c["id"]).first()
             if challenge:
-                challenge.title = c["title"]
-                challenge.content = c["content"]
-                challenge.tags = []  # 一旦タグを空にする
-                for tag_name in c.get("tags", []):
-                    tag = next((t for t in all_tags if t.name == tag_name), None)
-                    if tag:
-                        challenge.tags.append(tag)
-
-        db.commit()
+                challenge.title = c.get("title", challenge.title)
+                challenge.content = c.get("content", challenge.content)
+                db.add(challenge)
         
-        challenges = db.query(mymodels_MySQL.Challenge).filter(mymodels_MySQL.Challenge.meeting_id == meeting_id).all()
-        knowledges = db.query(mymodels_MySQL.Knowledge).filter(mymodels_MySQL.Knowledge.meeting_id == meeting_id).all()
-
-        # Challeneges と Knowledges を一つの文書にまとめる
-        all_content = "## 課題\n-"+ "\n- ".join([challenge.content for challenge in challenges]) + "\n\n## 知見\n-"+ "\n- ".join([knowledge.content for knowledge in knowledges])
-        create_index(all_content)
+        # 5. すべての更新を一括コミット
+        db.commit()
+        db.refresh(meeting)
+        
+        # 6. 更新済み知見をまとめてベクトル化処理
+        if updated_knowledges:
+            create_index(updated_knowledges, index, embeddings)
         
         return {
             "message": "Meeting内容を更新しベクトル化しました",
             "meeting_id": meeting_id
-            }
-
+        }
     finally:
         db.close()
 
-def create_index(content: str):
-    """
-    ナレッジの内容をベクトル化してPineconeに保存する
-    
-    Args:
-        content: ベクトル化する内容
-    """
-    try:
-        # ベクトル化
-        knowledge_vector = embeddings.embed_query(content)
-        
-        # ユニークなIDを生成（タイムスタンプとハッシュを使用）
-        unique_id = hashlib.md5(content.encode()).hexdigest()
-        vector_id = f"vec_{int(time.time())}_{unique_id[:10]}"
-
-        # Pineconeへの保存
-        index.upsert([
-            (
-                vector_id, 
-                knowledge_vector,
-                {
-                    "text": content,
-                    "created_at": datetime.datetime.now().isoformat()
-                }
-            )
-        ])
-        
-        return {"status": "success", "vector_id": vector_id}
-        
-    except Exception as e:
-        print("❌️ ", str(e))
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "ベクトル化処理に失敗しました"}
-        )
-
 @app.get("/vectors")
-async def get_all_vectors():
-    try:
-        # まずインデックスの統計を取得
-        stats = index.describe_index_stats()
-        total_vectors = stats['total_vector_count']
-        
-        # インデックス内のすべてのベクトルを取得
-        fetch_response = index.query(
-            vector=[0] * 1536,  # ダミーのクエリベクトル
-            top_k=total_vectors,
-            include_metadata=True
-        )
-        
-        # レスポンスデータを整形（循環参照を避ける）
-        vectors = []
-        for match in fetch_response['matches']:
-            vector_data = {
-                "id": match.id,
-                "score": float(match.score) if match.score else None,  # numpy.float64をPythonのfloatに変換
-                "metadata": match.metadata
-            }
-            vectors.append(vector_data)
-        
-        return {
-            "total_vectors": total_vectors,
-            "vectors": vectors
-        }
-    except Exception as e:
-        error_detail = {
-            "message": str(e),
-            "type": type(e).__name__,
-            "traceback": traceback.format_exc()
-        }
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "ベクトル取得エラー", "details": error_detail}
-        )
+async def get_all_vectors_endpoint():
+    return get_all_vectors(index)
 
 @app.get("/latest_meeting", response_model=List[MeetingResponse])
 def get_latest_meeting(user_id: int = Query(..., description="ユーザーID")):
@@ -538,12 +402,11 @@ def get_latest_meeting(user_id: int = Query(..., description="ユーザーID")):
     指定されたユーザーIDの最新の会議データと関連するチャレンジとナレッジを取得するエンドポイント
     """
     try:
-        result = crud.get_meeting_with_related_data_using_join_optimized(user_id=user_id, limit=4)
+        result = get_meeting_with_related_data_using_join_optimized(user_id=user_id, limit=4)
         return result
     except Exception as e:
         print(f"エラーが発生しました: {e}")
         return []
-
 
 @app.post("/solution_knowledge", response_model=SolutionKnowledgeResponse)
 def create_solution_knowledge(challenge: SolutionKnowledgeRequest):
@@ -569,24 +432,21 @@ def create_solution_knowledge(challenge: SolutionKnowledgeRequest):
         
         combined_knowledge = "\n".join(knowledge_texts)
         print(combined_knowledge)
-
+        
         # GPT による要約生成
         summary_response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "以下のユーザーの質問に対する回答をコンテキスト情報を元に500文字以内で生成してください。コンテキスト情報に含まれない内容は回答しないでください"},
+                {"role": "system", "content": "You are a helpful assistant that summarizes text."},
                 {"role": "user", "content": f"""
-ユーザーの質問：
-{challenge.content}
-
-コンテキスト：
-{combined_knowledge}
-"""
-        }
+        以下のユーザーの質問に対する回答をコンテキスト情報を元に500文字以内で生成してください。コンテキスト情報に含まれない内容は回答しないでください。
+        ユーザーの質問：{challenge.content}
+        コンテキスト：{combined_knowledge}
+        """}
             ],
             temperature=0.5,
             max_tokens=500
-        )
+)
         
         print("summary_response",summary_response)
 
@@ -595,16 +455,14 @@ def create_solution_knowledge(challenge: SolutionKnowledgeRequest):
         print("summary",summary)
 
         # ナレッジ ID を取得
-        # knowledge_ids = [match["id"] for match in response.get("matches", [])]
-        # ナレッジの詳細情報を取得
-        # knowledges = crud.get_knowledge_details(knowledge_ids)
+        knowledge_ids = [match["metadata"]["knowledge_id"] for match in response.get("matches", [])]
 
-        # print("✅ knowledges")
-        # print(knowledges)   
+        # ナレッジの詳細情報を取得
+        knowledges = get_knowledge_details(knowledge_ids)
 
         return {
             "summary": summary,
-            #"knowledges": knowledge_ids
+            "knowledges": knowledges
         }
 
     except Exception as e:
