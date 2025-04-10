@@ -41,13 +41,14 @@ def mysellectall(mymodel):
 # 最新の会議データと関連するチャレンジとナレッジを取得する最適化された関数
 # フロントのサイドバーに4件の会議タイトルが表示されるので4件の会議データを取得する
 # -----------------------------------------------------------------------------
-def get_meeting_with_related_data_using_join_optimized(user_id: int = None, limit=4):
+def get_meeting_with_related_data_using_join_optimized(user_id: int = None, limit=4, exclude_user: bool = False):
     """
     JOINを利用して一度のクエリで最新の会議データと関連するチャレンジとナレッジを取得する最適化された関数
     
     Args:
-        user_id (int, optional): ユーザーID（指定された場合、そのユーザーの会議のみを取得）
+        user_id (int, optional): ユーザーID（指定された場合、そのユーザーの会議のみを取得、または除外）
         limit (int): 取得する会議の数（デフォルト: 4）
+        exclude_user (bool): Trueの場合、指定されたuser_idを除外する
         
     Returns:
         list: 会議データと関連するチャレンジとナレッジのリスト
@@ -58,9 +59,23 @@ def get_meeting_with_related_data_using_join_optimized(user_id: int = None, limi
     
     try:
         # 最新の会議データを取得（IDが最大のものから指定数）
-        meetings_query = select(Meeting)
+        meetings_query = select(
+            Meeting.id,
+            Meeting.user_id,
+            Meeting.title,
+            Meeting.summary,
+            Meeting.created_at,
+            User.name.label('user_name')
+        ).join(
+            User, Meeting.user_id == User.id
+        )
+        
         if user_id is not None:
-            meetings_query = meetings_query.where(Meeting.user_id == user_id)
+            if exclude_user:
+                meetings_query = meetings_query.where(Meeting.user_id != user_id)
+            else:
+                meetings_query = meetings_query.where(Meeting.user_id == user_id)
+                
         meetings_query = meetings_query.order_by(Meeting.id.desc()).limit(limit)
         meetings_df = pd.read_sql_query(meetings_query, con=engine)
         meetings_data = json.loads(meetings_df.to_json(orient='records', force_ascii=False))

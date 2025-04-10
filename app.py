@@ -23,7 +23,8 @@ from db_control.crud import (
 from schemas import (
     SolutionKnowledgeRequest,
     SolutionKnowledgeResponse,
-    MeetingResponse
+    MeetingResponse,
+    OtherMeetingResponse
 )
 
 # OpenAI関連のインポート
@@ -403,6 +404,21 @@ def get_latest_meeting(user_id: int = Query(..., description="ユーザーID")):
     """
     try:
         result = get_meeting_with_related_data_using_join_optimized(user_id=user_id, limit=4)
+        return result
+    except Exception as e:
+        print(f"エラーが発生しました: {e}")
+        return []
+
+@app.get("/latest_meeting/other_users", response_model=List[OtherMeetingResponse])
+def get_latest_meeting_other_users(
+    user_id: int = Query(..., description="除外するユーザーID"),
+    limit: int = Query(4, description="取得する会議の数")
+):
+    """
+    指定されたユーザーID以外の最新の会議データと関連するチャレンジとナレッジを取得するエンドポイント
+    """
+    try:
+        result = get_meeting_with_related_data_using_join_optimized(user_id=user_id, limit=limit, exclude_user=True)
         return result
     except Exception as e:
         print(f"エラーが発生しました: {e}")
