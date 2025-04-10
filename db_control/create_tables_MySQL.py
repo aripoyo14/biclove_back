@@ -12,15 +12,14 @@ def init_db():
 
     print("Checking tables...")
 
-    # 必要なテーブルのリスト
+    # 必要なテーブルのリスト（Tag 系削除済み）
     required_tables = [
         'users',
         'meeting',
         'knowledge',
         'challenge',
-        'tags',
-        'knowledge_tags',
-        'challenge_tags',
+        'solution_knowledge',
+        'reference',
         'thanks',
         'view'
     ]
