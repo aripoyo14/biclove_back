@@ -110,6 +110,17 @@ class MeetingResponse(BaseModel):
 
     model_config = ConfigDict(json_encoders=DATETIME_ENCODER)
 
+class OtherMeetingResponse(BaseModel):
+    id: Optional[int] = None
+    user_id: int
+    user_name: str
+    title: str
+    summary: str
+    created_at: Optional[datetime.datetime] = None
+    challenges: List[Challenge] = []
+    knowledges: List[Knowledge] = []
+
+    model_config = ConfigDict(json_encoders=DATETIME_ENCODER)
 
 # RAG / Pinecone 用マッチスキーマ
 class Match(BaseModel):
